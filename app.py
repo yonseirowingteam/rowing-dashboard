@@ -106,19 +106,17 @@ if st.sidebar.button("🔄 데이터 즉시 새로고침"):
     st.cache_data.clear()
     st.rerun()
 
-# 1) 챌린지 목표 거리 
 target_meters = st.sidebar.number_input(
     "누적 챌린지 목표 거리 (m)",
     value=50000,
     step=5000
 )
 
-# 2) 부원 구분 필터
 st.sidebar.subheader("👥 부원 그룹 선택")
 group_options = ["전체", "기존", "신입"]
-selected_group = st.sidebar.radio("조회할 그룹을 선택하세요", group_options)
+# 공지에 따라 기본값을 '기존'으로 설정해두면 편리합니다.
+selected_group = st.sidebar.radio("조회할 그룹을 선택하세요", group_options, index=1) 
 
-# 3) 기간 설정
 if not df.empty:
     min_date = df['날짜'].min().date()
     max_date = df['날짜'].max().date()
@@ -153,13 +151,13 @@ if selected_member != "전체 부원":
 filtered_df = df[mask]
 
 # ----------------------------------------------------
-# 4. 상단 KPI 대시보드 지표 (글자 잘림 방지 최적화)
+# 4. 상단 KPI 대시보드 지표
 # ----------------------------------------------------
 st.title("🚣 조정부 운동인증 챌린지")
 st.caption(f"🗓️ 조회 기간: **{start_date} ~ {end_date}** ｜ 👥 조회 그룹: **{selected_group}**")
 
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-kpi1.metric("훈련 횟수", f"{len(filtered_df):,}회")
+kpi1.metric("인증된 훈련 횟수", f"{len(filtered_df):,}회")
 kpi2.metric("총 누적 거리", f"{filtered_df['총거리'].sum():,.0f}m")
 
 avg_dist = filtered_df['총거리'].mean() if len(filtered_df) > 0 else 0
@@ -169,45 +167,79 @@ kpi4.metric("참여 인원", f"{filtered_df['이름'].nunique()}명")
 st.divider()
 
 # ----------------------------------------------------
-# 5. 누적 거리 챌린지 (순위 및 프로그레스 바)
+# 5. [핵심] 🎟️ 개인별 추첨권 획득 현황판
 # ----------------------------------------------------
-st.subheader(f"🎯 {target_meters:,}m 누적 챌린지 현황 ({selected_group} 랭킹)")
+st.subheader(f"🎟️ 개인별 추첨권 획득 현황 ({selected_group})")
+st.info("💡 **추첨권 규칙**: 운동 1회 인증 당 **1장** 획득 | 누적 50,000m 달성 시 **보너스 3장** 추가 지급 🎁")
 
 if not filtered_df.empty:
-    cum_summary = filtered_df.groupby(['이름', '구분'])['총거리'].sum().reset_index()
-    cum_summary['달성률(%)'] = (cum_summary['총거리'] / target_meters * 100).round(1)
-    cum_summary['남은거리(m)'] = (target_meters - cum_summary['총거리']).apply(lambda x: max(0, x))
-    cum_summary['상태'] = cum_summary['총거리'].apply(lambda x: "🎖️ 완주" if x >= target_meters else "🚣 진행 중")
-    cum_summary = cum_summary.sort_values(by='총거리', ascending=False).reset_index(drop=True)
+    # 개인별 인증 횟수(행 개수)와 총 거리 계산
+    ticket_df = filtered_df.groupby(['이름', '구분']).agg(
+        참여횟수=('날짜', 'count'),
+        총거리=('총거리', 'sum')
+    ).reset_index()
 
-    # 상위 3명 포디움
-    top_n = min(len(cum_summary), 3)
+    # 추첨권 로직 적용
+    ticket_df['기본추첨권'] = ticket_df['참여횟수']
+    ticket_df['보너스추첨권'] = ticket_df['총거리'].apply(lambda x: 3 if x >= target_meters else 0)
+    ticket_df['총추첨권'] = ticket_df['기본추첨권'] + ticket_df['보너스추첨권']
+    
+    # 총 추첨권이 많은 순, 거리가 많은 순으로 정렬
+    ticket_df = ticket_df.sort_values(by=['총추첨권', '총거리'], ascending=[False, False]).reset_index(drop=True)
+
+    # 🏆 상위 3명 추첨권 포디움 하이라이트
+    top_n = min(len(ticket_df), 3)
     cols = st.columns(top_n)
     for i in range(top_n):
-        row = cum_summary.iloc[i]
+        row = ticket_df.iloc[i]
         cols[i].metric(
             label=f"🏆 {i+1}위: {row['이름']} ({row['구분']})",
-            value=f"{row['총거리']:,.0f} m",
-            delta=f"달성률 {row['달성률(%)']}% ({row['상태']})"
+            value=f"🎟️ {row['총추첨권']} 장",
+            delta=f"누적 {row['총거리']:,.0f}m 달성"
         )
 
-    # 부원별 진행도 열람
-    with st.expander("📊 전체 부원별 챌린지 진행도 열람", expanded=True):
-        for _, row in cum_summary.iterrows():
+    # 전체 추첨권 현황 데이터프레임 (깔끔한 표 형태)
+    st.dataframe(
+        ticket_df[['이름', '구분', '총추첨권', '기본추첨권', '보너스추첨권', '총거리']],
+        column_config={
+            "이름": "부원 이름",
+            "구분": "분류",
+            "총추첨권": st.column_config.NumberColumn("🎟️ 총 추첨권", help="기본과 보너스의 합계입니다."),
+            "기본추첨권": st.column_config.NumberColumn("✅ 기본 (인증횟수)", help="운동 1회당 1장"),
+            "보너스추첨권": st.column_config.NumberColumn("🎁 보너스 (5만m)", help="50,000m 달성 시 3장"),
+            "총거리": st.column_config.NumberColumn("🏃 누적 거리 (m)", format="%d m")
+        },
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.divider()
+
+    # ----------------------------------------------------
+    # 6. 🎯 50,000m 누적 챌린지 프로그레스 바
+    # ----------------------------------------------------
+    st.subheader(f"🎯 {target_meters:,}m 보너스 달성률 현황")
+    
+    with st.expander("📊 50,000m 달성 진행도 및 남은 거리 보기", expanded=True):
+        for _, row in ticket_df.iterrows():
             p_col1, p_col2 = st.columns([1, 4])
+            달성률_퍼센트 = min(float(row['총거리'] / target_meters), 1.0)
+            상태 = "🎁 보너스 3장 획득!" if row['총거리'] >= target_meters else "🚣 진행 중"
+            남은거리 = max(0, target_meters - row['총거리'])
+
             with p_col1:
-                st.write(f"**{row['이름']}** ({row['상태']})")
-                st.caption(f"{row['총거리']:,.0f}m / 남은 거리: {row['남은거리(m)']:,.0f}m")
+                st.write(f"**{row['이름']}**")
+                st.caption(f"{상태} | 남은거리: {남은거리:,.0f}m")
             with p_col2:
-                prog_val = min(float(row['달성률(%)'] / 100), 1.0)
-                st.progress(prog_val)
+                st.progress(달성률_퍼센트)
+                
 else:
     st.info(f"해당 기간에 기록을 등록한 {selected_group} 부원이 없습니다.")
 
 st.divider()
 
 # ----------------------------------------------------
-# 6. 기량 분석 차트
+# 7. 기량 분석 차트
 # ----------------------------------------------------
 chart_col1, chart_col2 = st.columns(2)
 
@@ -233,7 +265,7 @@ with chart_col2:
         fig_race = px.line(
             race_df, x='날짜', y='누적거리', color='이름', markers=True
         )
-        fig_race.add_hline(y=target_meters, line_dash="dash", line_color="red", annotation_text="목표선")
+        fig_race.add_hline(y=target_meters, line_dash="dash", line_color="red", annotation_text="보너스 기준선")
         fig_race.update_layout(template="plotly_white", legend_title_text="부원 이름")
         st.plotly_chart(fig_race, use_container_width=True)
     else:
@@ -242,9 +274,9 @@ with chart_col2:
 st.divider()
 
 # ----------------------------------------------------
-# 7. 폴더형 메모리 인증 사진 아카이브
+# 8. 폴더형 메모리 인증 사진 아카이브
 # ----------------------------------------------------
-st.subheader("📷 에르고미터 메모리 인증 기록실")
+st.subheader("📷 운동 인증 기록실")
 
 photo_records = filtered_df[filtered_df['사진링크'].astype(str).str.contains("http", na=False)].sort_values('날짜', ascending=False)
 
