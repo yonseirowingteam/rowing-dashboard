@@ -8,7 +8,7 @@ from datetime import datetime
 # 1. 페이지 테마 및 레이아웃 설정
 # ----------------------------------------------------
 st.set_page_config(
-    page_title="조정부 Rowing Data Lab",
+    page_title="조정부 운동인증 챌린지",
     page_icon="🚣",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -113,12 +113,12 @@ target_meters = st.sidebar.number_input(
     step=5000
 )
 
-# 2) 부원 구분 필터 (전체/기존/신입 라디오 버튼 적용)
+# 2) 부원 구분 필터
 st.sidebar.subheader("👥 부원 그룹 선택")
 group_options = ["전체", "기존", "신입"]
 selected_group = st.sidebar.radio("조회할 그룹을 선택하세요", group_options)
 
-# 3) 기간 설정 (min_value, max_value 제한 완전 해제)
+# 3) 기간 설정
 if not df.empty:
     min_date = df['날짜'].min().date()
     max_date = df['날짜'].max().date()
@@ -153,18 +153,18 @@ if selected_member != "전체 부원":
 filtered_df = df[mask]
 
 # ----------------------------------------------------
-# 4. 상단 KPI 대시보드 지표
+# 4. 상단 KPI 대시보드 지표 (글자 잘림 방지 최적화)
 # ----------------------------------------------------
-st.title("🚣 조정부 Data Lab & Memory Archive")
-st.caption(f"조회 기간: **{start_date} ~ {end_date}** | 현재 그룹: **{selected_group}**")
+st.title("🚣 조정부 운동인증 챌린지")
+st.caption(f"🗓️ 조회 기간: **{start_date} ~ {end_date}** ｜ 👥 조회 그룹: **{selected_group}**")
 
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-kpi1.metric("총 훈련 세션", f"{len(filtered_df):,} 회")
-kpi2.metric("기간 총 훈련 거리", f"{filtered_df['총거리'].sum():,.0f} m")
+kpi1.metric("훈련 횟수", f"{len(filtered_df):,}회")
+kpi2.metric("총 누적 거리", f"{filtered_df['총거리'].sum():,.0f}m")
 
 avg_dist = filtered_df['총거리'].mean() if len(filtered_df) > 0 else 0
-kpi3.metric("세션당 평균 거리", f"{avg_dist:,.0f} m")
-kpi4.metric("참여 인원", f"{filtered_df['이름'].nunique()} 명")
+kpi3.metric("1회 평균 거리", f"{avg_dist:,.0f}m")
+kpi4.metric("참여 인원", f"{filtered_df['이름'].nunique()}명")
 
 st.divider()
 
