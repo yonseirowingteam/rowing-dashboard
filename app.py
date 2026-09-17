@@ -52,7 +52,7 @@ def extract_drive_image_urls(raw_text):
     return direct_urls
 
 # ----------------------------------------------------
-# 데이터 로딩 및 전처리
+# 데이터 로딩 및 전처리 (날짜 파싱 정밀 강화)
 # ----------------------------------------------------
 @st.cache_data(ttl=30)
 def load_data():
@@ -67,10 +67,36 @@ def load_data():
         
     df = raw_df.rename(columns=rename_dict)
     
+    # 한국어 타임스탬프 및 다양한 날짜 포맷을 정확히 읽어오는 함수
     def parse_korean_date(val):
         if pd.isna(val): return pd.NaT
-        s = str(val).strip().replace("오후", "PM").replace("오전", "AM")
-        return pd.to_datetime(s, errors='coerce')
+        s = str(val).strip()
+        
+        # 1. 엑셀/시트 내부 직렬값(숫자)으로 들어온 경우 처리
+        if s.replace('.', '', 1).isdigit():
+            try:
+                return pd.to_datetime(float(s), unit='D', origin='1899-12-30')
+            except:
+                pass
+
+        # 2. 한국어 표기 정리 ("오후" -> "PM", "오전" -> "AM", 불필요한 점 정리)
+        s_clean = s.replace("오후", "PM").replace("오전", "AM")
+        
+        # 3. 판다스 기본 파서로 우선 시도
+        dt = pd.to_datetime(s_clean, errors='coerce')
+        if not pd.isna(dt):
+            return dt
+            
+        # 4. 정규식을 이용해 "2026. 9. 14 오후..." 형태 직접 추출
+        try:
+            m = re.search(r'(\d{4})[./\s]+(\d{1,2})[./\s]+(\d{1,2})', s_clean)
+            if m:
+                year, month, day = m.groups()
+                return pd.to_datetime(f"{year}-{month.zfill(2)}-{day.zfill(2)}")
+        except:
+            pass
+            
+        return pd.NaT
 
     df['날짜'] = df['날짜'].apply(parse_korean_date)
     df = df.dropna(subset=['날짜', '이름'])
@@ -172,21 +198,17 @@ if not filtered_df.empty:
     st.subheader(f"🎟️ 개인별 추첨권 획득 현황 ({selected_group})")
     st.info("💡 **추첨권 규칙**: 운동 1회 인증 당 **1장** 획득 | 누적 50,000m 달성 시 **보너스 3장** 추가 지급 🎁")
 
-    # 개인별 인증 횟수(행 개수)와 총 거리 계산
     ticket_df = filtered_df.groupby(['이름', '구분']).agg(
         참여횟수=('날짜', 'count'),
         총거리=('총거리', 'sum')
     ).reset_index()
 
-    # 추첨권 로직 적용
     ticket_df['기본추첨권'] = ticket_df['참여횟수']
     ticket_df['보너스추첨권'] = ticket_df['총거리'].apply(lambda x: 3 if x >= target_meters else 0)
     ticket_df['총추첨권'] = ticket_df['기본추첨권'] + ticket_df['보너스추첨권']
     
-    # 랭킹 정렬 (총 추첨권 우선, 같으면 거리가 많은 순)
     ticket_df = ticket_df.sort_values(by=['총추첨권', '총거리'], ascending=[False, False]).reset_index(drop=True)
 
-    # 🏆 상위 3명 추첨권 포디움 하이라이트
     top_n = min(len(ticket_df), 3)
     cols = st.columns(top_n)
     for i in range(top_n):
@@ -197,7 +219,6 @@ if not filtered_df.empty:
             delta=f"누적 {row['총거리']:,.0f}m 달성"
         )
 
-    # 전체 추첨권 현황 데이터프레임
     st.dataframe(
         ticket_df[['이름', '구분', '총추첨권', '기본추첨권', '보너스추첨권', '총거리']],
         column_config={
@@ -219,7 +240,6 @@ if not filtered_df.empty:
     # ----------------------------------------------------
     st.subheader(f"🎯 {target_meters:,}m 보너스 달성률 현황")
     
-    # 🏆 50,000m 거리 기준 랭킹 정렬 및 포디움
     dist_df = ticket_df.sort_values(by='총거리', ascending=False).reset_index(drop=True)
     
     top_n_dist = min(len(dist_df), 3)
@@ -234,7 +254,6 @@ if not filtered_df.empty:
             delta=f"달성률 {달성률:.1f}% ({상태})"
         )
 
-    # 전체 부원 프로그레스 바 목록
     with st.expander("📊 50,000m 달성 진행도 및 남은 거리 보기", expanded=True):
         for _, row in dist_df.iterrows():
             p_col1, p_col2 = st.columns([1, 4])
