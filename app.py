@@ -118,7 +118,7 @@ st.sidebar.subheader("👥 부원 그룹 선택")
 group_options = ["전체", "기존", "신입"]
 selected_group = st.sidebar.radio("조회할 그룹을 선택하세요", group_options)
 
-# 3) 기간 설정
+# 3) 기간 설정 (min_value, max_value 제한 완전 해제)
 if not df.empty:
     min_date = df['날짜'].min().date()
     max_date = df['날짜'].max().date()
@@ -129,9 +129,7 @@ else:
 st.sidebar.subheader("📅 날짜 설정")
 date_range = st.sidebar.date_input(
     "조회 기간",
-    value=[min_date, max_date],
-    min_value=min_date,
-    max_value=max_date
+    value=[min_date, max_date]
 )
 
 if len(date_range) == 2:
@@ -176,7 +174,6 @@ st.divider()
 st.subheader(f"🎯 {target_meters:,}m 누적 챌린지 현황 ({selected_group} 랭킹)")
 
 if not filtered_df.empty:
-    # 필터링된 데이터(filtered_df)를 기반으로 누적 계산
     cum_summary = filtered_df.groupby(['이름', '구분'])['총거리'].sum().reset_index()
     cum_summary['달성률(%)'] = (cum_summary['총거리'] / target_meters * 100).round(1)
     cum_summary['남은거리(m)'] = (target_meters - cum_summary['총거리']).apply(lambda x: max(0, x))
