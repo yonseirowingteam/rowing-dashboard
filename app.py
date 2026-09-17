@@ -114,7 +114,6 @@ target_meters = st.sidebar.number_input(
 
 st.sidebar.subheader("👥 부원 그룹 선택")
 group_options = ["전체", "기존", "신입"]
-# 공지에 따라 기본값을 '기존'으로 설정해두면 편리합니다.
 selected_group = st.sidebar.radio("조회할 그룹을 선택하세요", group_options, index=1) 
 
 if not df.empty:
@@ -166,13 +165,13 @@ kpi4.metric("참여 인원", f"{filtered_df['이름'].nunique()}명")
 
 st.divider()
 
-# ----------------------------------------------------
-# 5. [핵심] 🎟️ 개인별 추첨권 획득 현황판
-# ----------------------------------------------------
-st.subheader(f"🎟️ 개인별 추첨권 획득 현황 ({selected_group})")
-st.info("💡 **추첨권 규칙**: 운동 1회 인증 당 **1장** 획득 | 누적 50,000m 달성 시 **보너스 3장** 추가 지급 🎁")
-
 if not filtered_df.empty:
+    # ----------------------------------------------------
+    # 5. [핵심] 🎟️ 개인별 추첨권 획득 현황판
+    # ----------------------------------------------------
+    st.subheader(f"🎟️ 개인별 추첨권 획득 현황 ({selected_group})")
+    st.info("💡 **추첨권 규칙**: 운동 1회 인증 당 **1장** 획득 | 누적 50,000m 달성 시 **보너스 3장** 추가 지급 🎁")
+
     # 개인별 인증 횟수(행 개수)와 총 거리 계산
     ticket_df = filtered_df.groupby(['이름', '구분']).agg(
         참여횟수=('날짜', 'count'),
@@ -184,7 +183,7 @@ if not filtered_df.empty:
     ticket_df['보너스추첨권'] = ticket_df['총거리'].apply(lambda x: 3 if x >= target_meters else 0)
     ticket_df['총추첨권'] = ticket_df['기본추첨권'] + ticket_df['보너스추첨권']
     
-    # 총 추첨권이 많은 순, 거리가 많은 순으로 정렬
+    # 랭킹 정렬 (총 추첨권 우선, 같으면 거리가 많은 순)
     ticket_df = ticket_df.sort_values(by=['총추첨권', '총거리'], ascending=[False, False]).reset_index(drop=True)
 
     # 🏆 상위 3명 추첨권 포디움 하이라이트
@@ -198,7 +197,7 @@ if not filtered_df.empty:
             delta=f"누적 {row['총거리']:,.0f}m 달성"
         )
 
-    # 전체 추첨권 현황 데이터프레임 (깔끔한 표 형태)
+    # 전체 추첨권 현황 데이터프레임
     st.dataframe(
         ticket_df[['이름', '구분', '총추첨권', '기본추첨권', '보너스추첨권', '총거리']],
         column_config={
@@ -216,12 +215,28 @@ if not filtered_df.empty:
     st.divider()
 
     # ----------------------------------------------------
-    # 6. 🎯 50,000m 누적 챌린지 프로그레스 바
+    # 6. 🎯 50,000m 누적 챌린지 프로그레스 바 & 거리 랭킹
     # ----------------------------------------------------
     st.subheader(f"🎯 {target_meters:,}m 보너스 달성률 현황")
     
+    # 🏆 50,000m 거리 기준 랭킹 정렬 및 포디움
+    dist_df = ticket_df.sort_values(by='총거리', ascending=False).reset_index(drop=True)
+    
+    top_n_dist = min(len(dist_df), 3)
+    dist_cols = st.columns(top_n_dist)
+    for i in range(top_n_dist):
+        row = dist_df.iloc[i]
+        달성률 = min(float(row['총거리'] / target_meters * 100), 100.0)
+        상태 = "🎖️ 완주" if row['총거리'] >= target_meters else "🚣 진행 중"
+        dist_cols[i].metric(
+            label=f"🏆 거리 {i+1}위: {row['이름']} ({row['구분']})",
+            value=f"{row['총거리']:,.0f} m",
+            delta=f"달성률 {달성률:.1f}% ({상태})"
+        )
+
+    # 전체 부원 프로그레스 바 목록
     with st.expander("📊 50,000m 달성 진행도 및 남은 거리 보기", expanded=True):
-        for _, row in ticket_df.iterrows():
+        for _, row in dist_df.iterrows():
             p_col1, p_col2 = st.columns([1, 4])
             달성률_퍼센트 = min(float(row['총거리'] / target_meters), 1.0)
             상태 = "🎁 보너스 3장 획득!" if row['총거리'] >= target_meters else "🚣 진행 중"
