@@ -19,7 +19,6 @@ st.set_page_config(
 # ----------------------------------------------------
 CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQKSCkdKmmNi07nmmO5RN6vDmt_dobOqdCpluVAoP-91dyu36nyuMjuXJXMXrzQDquOq9seEpHtN5_6/pub?gid=995447885&single=true&output=csv"
 
-# 시간 변환 함수 (현재 데이터엔 없지만 추후 확장 시 에러 방지용)
 def parse_time_to_seconds(time_str):
     if pd.isna(time_str): return None
     try:
@@ -36,7 +35,6 @@ def format_seconds_to_pace(seconds):
     s = seconds % 60
     return f"{m:02d}:{s:04.1f}"
 
-# 구글 드라이브 사진 링크 변환 함수
 def extract_drive_image_urls(raw_text):
     if pd.isna(raw_text): return []
     urls = [u.strip() for u in str(raw_text).split(',') if u.strip()]
@@ -60,7 +58,6 @@ def extract_drive_image_urls(raw_text):
 def load_data():
     raw_df = pd.read_csv(CSV_URL)
     
-    # [핵심 수정] 열 제목과 상관없이 무조건 0번~6번 순서대로 데이터 매핑
     expected_cols = ["날짜", "이름", "총거리", "운동종류", "사진링크", "구분", "메모"]
     actual_col_count = len(raw_df.columns)
     
@@ -70,7 +67,6 @@ def load_data():
         
     df = raw_df.rename(columns=rename_dict)
     
-    # 한국어 타임스탬프(오후/오전) 파싱
     def parse_korean_date(val):
         if pd.isna(val): return pd.NaT
         s = str(val).strip().replace("오후", "PM").replace("오전", "AM")
@@ -79,18 +75,15 @@ def load_data():
     df['날짜'] = df['날짜'].apply(parse_korean_date)
     df = df.dropna(subset=['날짜', '이름'])
     
-    # 총거리 데이터 안전하게 숫자로 변환 (쉼표 제거)
     if '총거리' in df.columns:
         df['총거리'] = pd.to_numeric(df['총거리'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
     else:
         df['총거리'] = 0
         
-    # 현재 폼에 없는 페이스, 소요시간 항목 빈값 처리 (추후 차트 에러 방지용)
     df['평균페이스'] = "-"
     df['페이스(초)'] = None
     df['운동시간(분)'] = None
     
-    # 필수 열이 누락되었을 경우 기본값 채우기
     if '사진링크' not in df.columns: df['사진링크'] = ""
     if '구분' not in df.columns: df['구분'] = "기존"
     if '운동종류' not in df.columns: df['운동종류'] = "운동"
@@ -98,7 +91,6 @@ def load_data():
         
     return df
 
-# 에러 메시지 출력용 예외 처리
 try:
     df = load_data()
 except Exception as e:
@@ -110,12 +102,23 @@ except Exception as e:
 # ----------------------------------------------------
 st.sidebar.title("🎛️ 필터 및 기간 설정")
 
-# 즉시 새로고침 버튼
 if st.sidebar.button("🔄 데이터 즉시 새로고침"):
     st.cache_data.clear()
     st.rerun()
 
-# 1) 기간 설정
+# 1) 챌린지 목표 거리 
+target_meters = st.sidebar.number_input(
+    "누적 챌린지 목표 거리 (m)",
+    value=50000,
+    step=5000
+)
+
+# 2) 부원 구분 필터 (전체/기존/신입 라디오 버튼 적용)
+st.sidebar.subheader("👥 부원 그룹 선택")
+group_options = ["전체", "기존", "신입"]
+selected_group = st.sidebar.radio("조회할 그룹을 선택하세요", group_options)
+
+# 3) 기간 설정
 if not df.empty:
     min_date = df['날짜'].min().date()
     max_date = df['날짜'].max().date()
@@ -123,6 +126,7 @@ else:
     min_date = datetime.today().date()
     max_date = datetime.today().date()
 
+st.sidebar.subheader("📅 날짜 설정")
 date_range = st.sidebar.date_input(
     "조회 기간",
     value=[min_date, max_date],
@@ -136,35 +140,25 @@ else:
     start_date = date_range[0]
     end_date = date_range[0]
 
-# 2) 챌린지 목표 거리 입력
-target_meters = st.sidebar.number_input(
-    "누적 챌린지 목표 거리 (m)",
-    value=50000,
-    step=5000
-)
-
-# 3) 구분 및 부원 필터
-all_groups = list(df['구분'].dropna().unique()) if '구분' in df.columns else []
-selected_groups = st.sidebar.multiselect("구분 필터", options=all_groups, default=all_groups)
-
 member_options = ["전체 부원"] + sorted(list(df['이름'].unique()))
-selected_member = st.sidebar.selectbox("부원 개별 조회", member_options)
+selected_member = st.sidebar.selectbox("부원 개별 조회 (선택)", member_options)
 
-# 데이터 필터링
-filtered_df = df[
-    (df['날짜'].dt.date >= start_date) & 
-    (df['날짜'].dt.date <= end_date)
-]
-if selected_groups:
-    filtered_df = filtered_df[filtered_df['구분'].isin(selected_groups)]
+# 데이터 필터링 연동
+mask = (df['날짜'].dt.date >= start_date) & (df['날짜'].dt.date <= end_date)
+
+if selected_group != "전체":
+    mask &= (df['구분'] == selected_group)
+
 if selected_member != "전체 부원":
-    filtered_df = filtered_df[filtered_df['이름'] == selected_member]
+    mask &= (df['이름'] == selected_member)
+
+filtered_df = df[mask]
 
 # ----------------------------------------------------
 # 4. 상단 KPI 대시보드 지표
 # ----------------------------------------------------
 st.title("🚣 조정부 Data Lab & Memory Archive")
-st.caption(f"조회 기간: **{start_date} ~ {end_date}**")
+st.caption(f"조회 기간: **{start_date} ~ {end_date}** | 현재 그룹: **{selected_group}**")
 
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 kpi1.metric("총 훈련 세션", f"{len(filtered_df):,} 회")
@@ -179,20 +173,17 @@ st.divider()
 # ----------------------------------------------------
 # 5. 누적 거리 챌린지 (순위 및 프로그레스 바)
 # ----------------------------------------------------
-st.subheader(f"🎯 {target_meters:,}m 누적 챌린지 현황")
+st.subheader(f"🎯 {target_meters:,}m 누적 챌린지 현황 ({selected_group} 랭킹)")
 
-cum_summary = df[
-    (df['날짜'].dt.date >= start_date) & 
-    (df['날짜'].dt.date <= end_date)
-].groupby(['이름', '구분'])['총거리'].sum().reset_index()
+if not filtered_df.empty:
+    # 필터링된 데이터(filtered_df)를 기반으로 누적 계산
+    cum_summary = filtered_df.groupby(['이름', '구분'])['총거리'].sum().reset_index()
+    cum_summary['달성률(%)'] = (cum_summary['총거리'] / target_meters * 100).round(1)
+    cum_summary['남은거리(m)'] = (target_meters - cum_summary['총거리']).apply(lambda x: max(0, x))
+    cum_summary['상태'] = cum_summary['총거리'].apply(lambda x: "🎖️ 완주" if x >= target_meters else "🚣 진행 중")
+    cum_summary = cum_summary.sort_values(by='총거리', ascending=False).reset_index(drop=True)
 
-cum_summary['달성률(%)'] = (cum_summary['총거리'] / target_meters * 100).round(1)
-cum_summary['남은거리(m)'] = (target_meters - cum_summary['총거리']).apply(lambda x: max(0, x))
-cum_summary['상태'] = cum_summary['총거리'].apply(lambda x: "🎖️ 완주" if x >= target_meters else "🚣 진행 중")
-cum_summary = cum_summary.sort_values(by='총거리', ascending=False).reset_index(drop=True)
-
-# 상위 3명 포디움
-if not cum_summary.empty:
+    # 상위 3명 포디움
     top_n = min(len(cum_summary), 3)
     cols = st.columns(top_n)
     for i in range(top_n):
@@ -203,16 +194,18 @@ if not cum_summary.empty:
             delta=f"달성률 {row['달성률(%)']}% ({row['상태']})"
         )
 
-# 부원별 진행도 열람
-with st.expander("📊 전체 부원별 챌린지 진행도 열람", expanded=True):
-    for _, row in cum_summary.iterrows():
-        p_col1, p_col2 = st.columns([1, 4])
-        with p_col1:
-            st.write(f"**{row['이름']}** ({row['상태']})")
-            st.caption(f"{row['총거리']:,.0f}m / 남은 거리: {row['남은거리(m)']:,.0f}m")
-        with p_col2:
-            prog_val = min(float(row['달성률(%)'] / 100), 1.0)
-            st.progress(prog_val)
+    # 부원별 진행도 열람
+    with st.expander("📊 전체 부원별 챌린지 진행도 열람", expanded=True):
+        for _, row in cum_summary.iterrows():
+            p_col1, p_col2 = st.columns([1, 4])
+            with p_col1:
+                st.write(f"**{row['이름']}** ({row['상태']})")
+                st.caption(f"{row['총거리']:,.0f}m / 남은 거리: {row['남은거리(m)']:,.0f}m")
+            with p_col2:
+                prog_val = min(float(row['달성률(%)'] / 100), 1.0)
+                st.progress(prog_val)
+else:
+    st.info(f"해당 기간에 기록을 등록한 {selected_group} 부원이 없습니다.")
 
 st.divider()
 
