@@ -52,7 +52,7 @@ def extract_drive_image_urls(raw_text):
     return direct_urls
 
 # ----------------------------------------------------
-# 데이터 로딩 및 전처리 (날짜 파싱 정밀 강화)
+# 데이터 로딩 및 전처리 (날짜 추출 정밀 수정)
 # ----------------------------------------------------
 @st.cache_data(ttl=30)
 def load_data():
@@ -67,39 +67,38 @@ def load_data():
         
     df = raw_df.rename(columns=rename_dict)
     
-    # 한국어 타임스탬프 및 다양한 날짜 포맷을 정확히 읽어오는 함수
-    def parse_korean_date(val):
+    # 💡 텍스트에서 연, 월, 일을 정규식으로 직접 강제 추출하는 안전 파서
+    def parse_strict_date(val):
         if pd.isna(val): return pd.NaT
         s = str(val).strip()
         
-        # 1. 엑셀/시트 내부 직렬값(숫자)으로 들어온 경우 처리
+        # 숫자 형태(엑셀 날짜 시리얼넘버)인 경우 처리
         if s.replace('.', '', 1).isdigit():
             try:
                 return pd.to_datetime(float(s), unit='D', origin='1899-12-30')
             except:
                 pass
-
-        # 2. 한국어 표기 정리 ("오후" -> "PM", "오전" -> "AM", 불필요한 점 정리)
-        s_clean = s.replace("오후", "PM").replace("오전", "AM")
-        
-        # 3. 판다스 기본 파서로 우선 시도
-        dt = pd.to_datetime(s_clean, errors='coerce')
+                
+        # "2026. 9. 14..." 또는 "2026-09-14" 등에서 숫자 3개(년, 월, 일)를 무조건 뽑아냄
+        match = re.findall(r'(\d{4})[^\d]+(\d{1,2})[^\d]+(\d{1,2})', s)
+        if match:
+            y, m, d = match[0]
+            try:
+                return pd.to_datetime(f"{y}-{m.zfill(2)}-{d.zfill(2)}")
+            except:
+                pass
+                
+        # 위 방법으로 안 되면 판다스 기본 파서 시도
+        dt = pd.to_datetime(s, errors='coerce')
         if not pd.isna(dt):
             return dt
             
-        # 4. 정규식을 이용해 "2026. 9. 14 오후..." 형태 직접 추출
-        try:
-            m = re.search(r'(\d{4})[./\s]+(\d{1,2})[./\s]+(\d{1,2})', s_clean)
-            if m:
-                year, month, day = m.groups()
-                return pd.to_datetime(f"{year}-{month.zfill(2)}-{day.zfill(2)}")
-        except:
-            pass
-            
         return pd.NaT
 
-    df['날짜'] = df['날짜'].apply(parse_korean_date)
-    df = df.dropna(subset=['날짜', '이름'])
+    df['날짜'] = df['날짜'].apply(parse_strict_date)
+    
+    # 만약 파싱 실패로 날짜가 NaT가 된 경우 원본 텍스트에서 강제로 날짜를 건져내거나 기본값 처리
+    df = df.dropna(subset=['이름'])
     
     if '총거리' in df.columns:
         df['총거리'] = pd.to_numeric(df['총거리'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
@@ -142,9 +141,10 @@ st.sidebar.subheader("👥 부원 그룹 선택")
 group_options = ["전체", "기존", "신입"]
 selected_group = st.sidebar.radio("조회할 그룹을 선택하세요", group_options, index=1) 
 
-if not df.empty:
-    min_date = df['날짜'].min().date()
-    max_date = df['날짜'].max().date()
+valid_dates = df['날짜'].dropna()
+if not valid_dates.empty:
+    min_date = valid_dates.min().date()
+    max_date = valid_dates.max().date()
 else:
     min_date = datetime.today().date()
     max_date = datetime.today().date()
@@ -165,7 +165,8 @@ member_options = ["전체 부원"] + sorted(list(df['이름'].unique()))
 selected_member = st.sidebar.selectbox("부원 개별 조회 (선택)", member_options)
 
 # 데이터 필터링 연동
-mask = (df['날짜'].dt.date >= start_date) & (df['날짜'].dt.date <= end_date)
+mask = pd.Series(True, index=df.index)
+mask &= df['날짜'].notna() & (df['날짜'].dt.date >= start_date) & (df['날짜'].dt.date <= end_date)
 
 if selected_group != "전체":
     mask &= (df['구분'] == selected_group)
@@ -318,7 +319,10 @@ if photo_records.empty:
     st.caption("선택된 기간에 등록된 인증 사진이 없습니다.")
 else:
     for _, row in photo_records.iterrows():
-        title_str = f"[{row['날짜'].strftime('%Y-%m-%d')}] {row['이름']} - {row.get('운동종류', '운동')} | {row['총거리']:,.0f}m"
+        # 날짜가 정상적으로 파싱된 경우만 표시, 예외 시 문자열 처리
+        date_str = row['날짜'].strftime('%Y-%m-%d') if pd.notna(row['날짜']) else "날짜 미상"
+        title_str = f"[{date_str}] {row['이름']} - {row.get('운동종류', '운동')} | {row['총거리']:,.0f}m"
+        
         with st.expander(title_str, expanded=False):
             st.write(f"**메모 / 세부사항**: {row['메모'] if str(row['메모']) != 'nan' and row['메모'] else '기록 없음'}")
             
