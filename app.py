@@ -12,9 +12,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 2. 구글 스프레드시트 연동
-SHEET_ID = "1TE_KyMv0jZg7KBY34UIkKSaCu7arUVDO1w8RY09n4Xc"
-CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=995447885"
+# 2. 구글 스프레드시트 '웹에 게시' CSV 링크 (보안 우회 완료)
+CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQKSCkdKmmNi07nmmO5RN6vDmt_dobOqdCpluVAoP-91dyu36nyuMjuXJXMXrzQDquOq9seEpHtN5_6/pub?gid=995447885&single=true&output=csv"
 
 # 시간 문자열(MM:SS 또는 MM:SS.S)을 초(sec)로 변환하는 함수
 def parse_time_to_seconds(time_str):
@@ -45,9 +44,7 @@ def extract_drive_image_urls(raw_text):
     urls = [u.strip() for u in str(raw_text).split(',') if u.strip()]
     direct_urls = []
     for url in urls:
-        # id= 추출
         match_id = re.search(r'id=([a-zA-Z0-9_-]+)', url)
-        # /d/ID/ 추출
         match_d = re.search(r'/d/([a-zA-Z0-9_-]+)', url)
         
         file_id = None
@@ -64,7 +61,7 @@ def extract_drive_image_urls(raw_text):
 def load_data():
     raw_df = pd.read_csv(CSV_URL)
     
-    # 구글 폼 열 이름 자동 매핑 (타임스탬프 포함)
+    # 구글 폼 열 이름 자동 매핑
     col_map = {}
     for col in raw_df.columns:
         c = col.replace(" ", "")
@@ -114,17 +111,22 @@ def load_data():
         
     return df
 
-# 데이터 로딩
+# 데이터 로딩 및 에러 확인
 try:
     df = load_data()
 except Exception as e:
-    st.error("스프레드시트 데이터를 읽어오는 중 오류가 발생했습니다. 구글 시트 공유 권한을 확인해주세요.")
+    st.error(f"데이터 로딩 중 구체적인 오류가 발생했습니다: {e}")
     st.stop()
 
 # ----------------------------------------------------
 # 3. 사이드바 컨트롤러 (필터 시스템)
 # ----------------------------------------------------
 st.sidebar.title("🎛️ 필터 및 기간 설정")
+
+# 즉시 새로고침 버튼 추가
+if st.sidebar.button("🔄 데이터 즉시 새로고침"):
+    st.cache_data.clear()
+    st.rerun()
 
 # 1) 기간 설정 (자유로운 날짜 범위 지정)
 if not df.empty:
@@ -283,7 +285,7 @@ if photo_records.empty:
     st.caption("선택된 기간에 등록된 사진이 없습니다.")
 else:
     for _, row in photo_records.iterrows():
-        title_str = f"[{row['날짜'].strftime('%Y-%m-%d')}] {row['이름']} - {row.get('운동종류', '운동')} | {row['총거리']:,.0f}m"
+        title_str = f"[{row['날짜'].strftime('%Y-%m-%d')}] {row['이름']} - {row.get('운동종류', '운동')} | {row['총거리']:,.0f}m (페이스: {row['평균페이스']})"
         with st.expander(title_str, expanded=False):
             st.write(f"**메모 / 스플릿 상세**: {row['메모'] if row['메모'] else '기록 없음'}")
             
