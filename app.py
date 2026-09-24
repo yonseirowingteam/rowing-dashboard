@@ -309,28 +309,47 @@ with chart_col2:
 st.divider()
 
 # ----------------------------------------------------
-# 8. 폴더형 메모리 인증 사진 아카이브
+# 8. 월별 폴더형 메모리 인증 사진 아카이브
 # ----------------------------------------------------
 st.subheader("📷 운동 인증 기록실")
+st.caption("아래에서 원하는 월(Month)을 클릭하여 기록을 확인하세요.")
 
-photo_records = filtered_df[filtered_df['사진링크'].astype(str).str.contains("http", na=False)].sort_values('날짜', ascending=False)
+# 사진이 포함된 데이터 복사 및 정렬 (최신 날짜 및 최신 입력순)
+photo_records = filtered_df[filtered_df['사진링크'].astype(str).str.contains("http", na=False)].copy()
+photo_records['제출순서'] = photo_records.index
+photo_records = photo_records.sort_values(by=['날짜', '제출순서'], ascending=[False, False])
 
 if photo_records.empty:
     st.caption("선택된 기간에 등록된 인증 사진이 없습니다.")
 else:
-    for _, row in photo_records.iterrows():
-        # 날짜가 정상적으로 파싱된 경우만 표시, 예외 시 문자열 처리
-        date_str = row['날짜'].strftime('%Y-%m-%d') if pd.notna(row['날짜']) else "날짜 미상"
-        title_str = f"[{date_str}] {row['이름']} - {row.get('운동종류', '운동')} | {row['총거리']:,.0f}m"
-        
-        with st.expander(title_str, expanded=False):
-            st.write(f"**메모 / 세부사항**: {row['메모'] if str(row['메모']) != 'nan' and row['메모'] else '기록 없음'}")
+    # 💡 월(YYYY년 MM월) 포맷 컬럼 추가
+    photo_records['월별'] = photo_records['날짜'].apply(
+        lambda x: x.strftime('%Y년 %m월') if pd.notna(x) else "날짜 미상"
+    )
+    
+    # 💡 존재하는 '월' 목록 추출 (최신순)
+    unique_months = photo_records['월별'].unique()
+    
+    # 💡 Streamlit 탭(Tabs)을 이용해 월별 폴더 생성
+    tabs = st.tabs(list(unique_months))
+    
+    for idx, month in enumerate(unique_months):
+        with tabs[idx]:
+            # 해당 월의 데이터만 필터링
+            month_df = photo_records[photo_records['월별'] == month]
             
-            img_urls = extract_drive_image_urls(row['사진링크'])
-            if img_urls:
-                img_cols = st.columns(min(len(img_urls), 4))
-                for idx, img_url in enumerate(img_urls):
-                    with img_cols[idx % 4]:
-                        st.image(img_url, caption=f"메모리 {idx+1}", use_container_width=True)
-            else:
-                st.caption("사진 링크를 가져올 수 없습니다. 드라이브 폴더 권한을 확인해주세요.")
+            for _, row in month_df.iterrows():
+                date_str = row['날짜'].strftime('%Y-%m-%d') if pd.notna(row['날짜']) else "날짜 미상"
+                title_str = f"[{date_str}] {row['이름']} - {row.get('운동종류', '운동')} | {row['총거리']:,.0f}m"
+                
+                with st.expander(title_str, expanded=False):
+                    st.write(f"**메모 / 세부사항**: {row['메모'] if str(row['메모']) != 'nan' and row['메모'] else '기록 없음'}")
+                    
+                    img_urls = extract_drive_image_urls(row['사진링크'])
+                    if img_urls:
+                        img_cols = st.columns(min(len(img_urls), 4))
+                        for i_idx, img_url in enumerate(img_urls):
+                            with img_cols[i_idx % 4]:
+                                st.image(img_url, caption=f"메모리 {i_idx+1}", use_container_width=True)
+                    else:
+                        st.caption("사진 링크를 가져올 수 없습니다. 드라이브 폴더 권한을 확인해주세요.")
